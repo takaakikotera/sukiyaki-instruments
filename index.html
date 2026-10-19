@@ -207,6 +207,9 @@ const KINDS={
     {kind:'cloud',code:'K',shape:'cloud',scale:1}
   ]
 };
+/* size of every shape relative to the ring (the ring's inner diameter is 292 units) */
+const FIELD_SCALE=.6;
+Object.values(KINDS).forEach(list=>list.forEach(k=>{ k.scale*=FIELD_SCALE; }));
 const kindDef=(m,kind)=>KINDS[m].find(k=>k.kind===kind);
 /* farthest point of a shape from its centre (rotation- and flip-proof), in field units */
 function shapeRad(m,kind){ const d=kindDef(m,kind), sd=SHAPES[d.shape]; let r=0;
@@ -690,7 +693,7 @@ function buildField(){
     const y=y0+i*step, g=sv('g',{class:'lib',transform:'translate(372 '+y.toFixed(1)+')'});
     g.appendChild(sv('circle',{cx:0,cy:0,r:step*.46,fill:'var(--paper)','fill-opacity':'.01',stroke:'none'}));
     if(k.marker){ g.appendChild(sv('polygon',{points:'-7,-6 7,-6 0,6',class:'g'})); }
-    else if(grid){ g.appendChild(shapeEl(k.shape,.22*k.scale,'g')); const t=sv('text',{x:0,y:step*.46-1,'text-anchor':'middle','font-size':'8'}); t.textContent=k.code; g.appendChild(t); }
+    else if(grid){ g.appendChild(shapeEl(k.shape,.22/FIELD_SCALE*k.scale,'g')); const t=sv('text',{x:0,y:step*.46-1,'text-anchor':'middle','font-size':'8'}); t.textContent=k.code; g.appendChild(t); }
     else g.appendChild(shapeEl(k.shape,Math.min(.26,step/140),'g'));
     bindLibDrag(g,k);
     lib.appendChild(g);
@@ -877,7 +880,7 @@ function bindLibDrag(g,k){
 function addObjectAt(kind,x,y){
   [x,y]=clampIn(mode,kind,x,y);
   const t=Math.round(curTick()); const i=cur().objs.length;
-  const o=makeObj(cur(),kind,t,x,y,0,0,(i*47)%180);
+  const o=makeObj(cur(),kind,t,x,y,0,0,0);   /* placed upright, as in the library */
   cur().objs.push(o); mountObj(o); select(o.id); renderField(); drawTimeline(); save();
 }
 function addObject(kind){
