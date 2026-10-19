@@ -1139,7 +1139,6 @@ let showGuide=false, guideKey=null, guideRows=[], libDrag=null;
 try{ showGuide=localStorage.getItem('sukiyaki-guide')==='1'; }catch(e){}
 const G_PENT=[0,2,3,4,6,7,9,10,11,13];                                   /* = PENT in AMB.circle */
 const G_CH=['Dm7','Em7','Fmaj7','G7','Am7','Bm7b5','Cmaj7'];            /* degree r, r+2, r+4, r+6 of D dorian (AMB.rrect) */
-const G_X={slab:['dark','bright'],bar:['dark','bright'],tri:['breathy','whistle'],circle:['soft','metallic'],rrect:['soft','bright'],rect:['dark','bright'],trap:['soft','click'],fan:['low sweep','high sweep'],cloud:['dark','bright']};
 function guideLabel(kind,k){
   switch(kind){
     case 'slab': case 'fan': return noteAt('ambient',k,-1);              /* degFromY, shift -1 */
@@ -1150,11 +1149,6 @@ function guideLabel(kind,k){
     case 'rect': return noteAt('ambient',Math.round(k/14*7),0)+' chord';
     default: return SCALES.ambient.notes[k%7];
   }
-}
-function guideCaption(kind){
-  if(!kind) return 'up / down = note \u00b7 select a shape to see its own notes';
-  const c={slab:'drone',bar:'wanders around this note',fan:'wave',cloud:'grains scatter around this note',circle:'bells near this note',rrect:'chord',rect:'held chord, rotation = voicing',tri:'up / down = band centre (no note)',trap:'up / down = drum pitch (no note)'}[kind]||'';
-  return kind+' \u00b7 '+c;
 }
 /* rings layout: 7 directions x 3 rings, scaled to how far this shape can travel */
 function ringsLabel(kind,deg){
@@ -1182,10 +1176,6 @@ function buildGuideRings(kind){
     [L/3,L*2/3,LM].forEach(rr=>gGuide.appendChild(sv('circle',{cx:CX,cy:CY,r:rr.toFixed(1),class:'gl'})));
     for(let i=0;i<7;i++){ const [x,y]=pt(LM,i*W-W/2); gGuide.appendChild(sv('line',{x1:CX,y1:CY,x2:x.toFixed(1),y2:y.toFixed(1)})); }
   }
-  const r=R-3, xw=G_X[kind]||['dark','bright'];
-  const l1='inside each ring: inner edge '+xw[0]+' \u2192 outer edge '+xw[1];
-  const l2=!kind?'angle = note (fifths, D at top) \u00b7 ring = octave \u00b7 select a shape':kind+' \u00b7 angle = '+(kind==='rrect'?'chord':'note')+' (fifths) \u00b7 ring = octave';
-  [l1,l2].forEach((tx,i)=>{ const t=sv('text',{x:CX,y:CY+r-20+i*10,'text-anchor':'middle',class:'cap'}); t.textContent=tx; gGuide.appendChild(t); });
 }
 function buildGuide(kind){
   gGuide.innerHTML=''; guideRows=[];
@@ -1203,9 +1193,6 @@ function buildGuide(kind){
       const t=sv('text',{x:CX-w+5,y:mid+2.5}); t.textContent=rw.lab; gGuide.appendChild(t);
       guideRows.push({top:rw.top,bot:rw.bot,rect,t}); });
   }
-  const xl=(G_X[kind]||['',''])[0], xr=(G_X[kind]||['',''])[1];
-  if(xl){ const t=sv('text',{x:CX,y:CY+r-20,'text-anchor':'middle',class:'cap'}); t.textContent='\u2190 '+xl+'   left / right   '+xr+' \u2192'; gGuide.appendChild(t); }
-  const c=sv('text',{x:CX,y:CY+r-10,'text-anchor':'middle',class:'cap'}); c.textContent=guideCaption(kind); gGuide.appendChild(c);
 }
 function updateGuide(){
   const on=showGuide&&mode==='ambient';
