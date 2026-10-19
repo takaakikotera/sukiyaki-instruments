@@ -65,7 +65,6 @@ svg text{font-family:var(--font);font-size:9px;fill:var(--ink);letter-spacing:.0
 .obj .in{stroke:var(--line);stroke-width:.6;fill:none;display:none}
 .obj.flip .in{display:block}
 .obj.gone{display:none}
-.obj.pre .sh{stroke-dasharray:3 3}
 .obj.ghost{pointer-events:none}
 .obj.ghost .sh{stroke-dasharray:2 2;opacity:.8}
 .obj.ghost.out .sh{opacity:.25}
@@ -88,6 +87,18 @@ svg text{font-family:var(--font);font-size:9px;fill:var(--ink);letter-spacing:.0
 .tl .sec{fill:none;stroke:var(--line);stroke-width:.6}
 .tl .rot{stroke:var(--ink);stroke-width:.7;fill:none;opacity:.7}
 .wave{pointer-events:none}
+.guide{pointer-events:none}
+.guide line{stroke:var(--line-2);stroke-width:.4;vector-effect:non-scaling-stroke}
+.guide rect{fill:var(--ring);opacity:0}
+.guide rect.on{opacity:.13}
+.guide text{font-size:7px;fill:var(--ink-2);letter-spacing:.04em}
+.guide text.on{fill:var(--ink)}
+.guide path.cell{fill:var(--ring);opacity:0;stroke:none}
+.guide path.cell.on{opacity:.13}
+.guide circle.gl{stroke:var(--line-2);stroke-width:.4;fill:none;vector-effect:non-scaling-stroke}
+.guide .cap{font-size:7px;fill:var(--ink-2)}
+#noteBtn{font-size:13px;line-height:1;color:var(--ink-2)}
+#noteBtn.on{color:var(--ring)}
 details{font-size:10px;color:var(--ink-2)}
 summary{cursor:pointer;letter-spacing:.08em;padding:4px 0}
 .meas .row{display:flex;flex-wrap:wrap;gap:4px 10px;padding:2px 0;font-variant-numeric:tabular-nums}
@@ -119,12 +130,13 @@ summary{cursor:pointer;letter-spacing:.08em;padding:4px 0}
     <span id="ringv" class="dim">ring 0.50</span></span>
     <span class="right">
     <span class="b" id="pieceName" role="button" tabindex="0">&#x2014;</span>
+    <span class="b" id="noteBtn" role="button" tabindex="0" aria-label="Note guide">&#x266a;</span>
     <span class="b" id="fsBtn" role="button" tabindex="0" aria-label="Full screen">&#x26f6;</span>
     <span class="b" id="menuBtn" role="button" tabindex="0" aria-label="Pieces">&#x2261;</span></span>
   </div>
   <div class="drawer" id="drawer" hidden>
     <div class="row"><span class="lbl">new</span><span class="b" data-new="ambient">blank &#xb7; ambient</span><span class="b" data-new="runway">blank &#xb7; runway</span><span class="b" data-tpl="ambient">start &#xb7; ambient</span><span class="b" data-tpl="runway">start &#xb7; runway</span></div>
-    <div class="row"><span class="lbl">this</span><span class="b" id="opDup">duplicate</span><span class="b" id="opRename">rename</span><span class="b" id="opCopy">copy json</span><span class="b" id="opPasteToggle">paste json</span></div>
+    <div class="row"><span class="lbl">this</span><span class="b" id="opDup">duplicate</span><span class="b" id="opRename">rename</span><span class="b" id="opCopy">copy json</span><span class="b" id="opPasteToggle">paste json</span><span class="b" id="opLayout">notes</span></div>
     <div id="pasteBox" hidden><textarea id="pasteArea" placeholder="paste a piece's json here" aria-label="Paste json"></textarea><div class="row"><span class="b" id="opPasteLoad">load pasted</span><span class="dim" id="pasteMsg"></span></div></div>
     <div class="lbl">saved</div>
     <div class="pieces" id="pieces"></div>
@@ -196,7 +208,7 @@ const KINDS={
     {kind:'riser',code:'RS',shape:'cloud',scale:.8,presets:['NOISE','TONE','FALL'],steps:16,hits:[16,16]}
   ],
   ambient:[
-    {kind:'slab',code:'S',shape:'slab',scale:1.5},
+    {kind:'slab',code:'S',shape:'slab',scale:1},
     {kind:'bar',code:'B',shape:'bar',scale:1},
     {kind:'tri',code:'T',shape:'tri',scale:1},
     {kind:'circle',code:'C',shape:'circle',scale:1},
@@ -213,7 +225,39 @@ function shapeRad(m,kind){ const d=kindDef(m,kind), sd=SHAPES[d.shape]; let r=0;
   if(sd.pts) sd.pts.forEach(p=>{ r=Math.max(r,Math.hypot(p[0],p[1])); }); else if(sd.el==='circle') r=sd.r; else r=Math.hypot(sd.w/2,sd.h/2);
   return r*d.scale; }
 const RING_IN=146;   /* inner edge of the double ring, in svg units */
-function clampIn(m,kind,x,y){ const lim=Math.max(0,(RING_IN-2-shapeRad(m,kind))/100), d=Math.hypot(x,y); if(d>lim&&d>0){ x*=lim/d; y*=lim/d; } return [x,y]; }
+/* ---------- where a shape is -> what it plays ----------
+   two layouts. 'vertical' = pieces made before the change: up/down = note, left/right = brightness (kept so they sound as before).
+   'rings' = new pieces: angle = note name (fifths order, D at the top), inner/middle/outer ring = octave, position inside the ring = brightness (inner edge dark, outer edge bright).
+   the rings are scaled to how far each shape can travel (clampIn), so every shape can reach all three. */
+const FIFTHS=[0,4,1,5,2,6,3];   /* clockwise from the top: D A E B F C G, as scale degrees */
+const isRings=()=>!!(piece&&piece.layout==='rings');
+function limOf(kind){ return Math.max(.05,(RING_IN-2-shapeRad('ambient',kind))/100); }
+function posOf(kind,s){
+  if(!isRings()) return {deg:degFromY(s.y),b:(s.x+1)/2,v:(1-s.y)/2,h:(s.x+1)/2,sec:null,ring:null};
+  const r=Math.hypot(s.x,s.y), L1=limOf(kind), RM=Math.max(L1,reachMax(kind));
+  let ring, b; if(r<L1*2/3){ const rn=r/L1; ring=Math.floor(rn*3); b=rn*3-ring; } else { ring=2; b=clamp((r-L1*2/3)/(RM-L1*2/3),0,1); }
+  const rn=clamp(r/RM,0,1);
+  const sec=Math.floor((((Math.atan2(s.x,-s.y)*180/Math.PI)+360+360/14)%360)/(360/7))%7;
+  return {deg:ring*7+FIFTHS[sec],b,v:rn,h:r<1e-4?0:(1+s.y/r)/2,sec,ring};
+}
+/* note name for a scale degree. rings pieces put C above B; vertical pieces keep the old numbering (C an octave low) so they do not change */
+function noteA(n,shift){ if(!isRings()) return noteAt('ambient',n,shift); const sc=SCALES.ambient, i=((n%7)+7)%7; return sc.notes[i]+(sc.base+Math.floor(n/7)+(shift||0)+(i===6?1:0)); }
+/* containment uses the shape's real outline at its current turn / flip, so a long shape can go further out when it lies along the rim.
+   without a turn (rot undefined) it falls back to the safe circle around the shape. */
+function placedVerts(m,kind,rot,flip){ const d=kindDef(m,kind), sd=SHAPES[d.shape];
+  if(sd.el==='circle') return {circle:sd.r*d.scale};
+  const base=sd.pts?sd.pts:[[-sd.w/2,-sd.h/2],[sd.w/2,-sd.h/2],[sd.w/2,sd.h/2],[-sd.w/2,sd.h/2]];
+  const a=(rot||0)*Math.PI/180, c=Math.cos(a), sn=Math.sin(a);
+  return {pts:base.map(([px,py])=>{ let X=px*d.scale, Y=py*d.scale; if(flip&&sd.flip==='x') X=-X; if(flip&&sd.flip==='y') Y=-Y; return [X*c-Y*sn, X*sn+Y*c]; })}; }
+function reachAlong(m,kind,ux,uy,rot,flip){ const Lr=RING_IN-2, pv=placedVerts(m,kind,rot,flip);
+  if(pv.circle!=null) return (Lr-pv.circle)/100;
+  let t=Infinity; pv.pts.forEach(([vx,vy])=>{ const b=ux*vx+uy*vy, q=b*b-(vx*vx+vy*vy)+Lr*Lr; t=Math.min(t,-b+Math.sqrt(Math.max(0,q))); });
+  return Math.max(0,t/100); }
+function clampIn(m,kind,x,y,rot,flip){ const d=Math.hypot(x,y); if(d===0) return [x,y];
+  const lim=rot==null?Math.max(0,(RING_IN-2-shapeRad(m,kind))/100):reachAlong(m,kind,x/d,y/d,rot,flip);
+  if(d>lim){ x*=lim/d; y*=lim/d; } return [x,y]; }
+const _reachMax={};
+function reachMax(kind){ if(_reachMax[kind]==null){ let mx=0; for(let a=0;a<360;a+=5) mx=Math.max(mx,reachAlong('ambient',kind,0,-1,a,0)); _reachMax[kind]=mx; } return _reachMax[kind]; }
 
 function generate(obj,m){
   const d=kindDef(m,obj.kind); if(!d.steps) return;
@@ -239,7 +283,7 @@ function makeObj(piece,kind,tick,x,y,lv,flip,rot){
     enter:tick,exit:null,kf:[{t:tick,x,y,lv:lv?1:0,flip:flip?1:0,rot:rot||0}],vars:[],taps:[],events:[]};
   generate(o,piece.mode); return o;
 }
-function blankPiece(m,name){ return {id:uid(),name:name||('untitled \u00b7 '+m),mode:m,bpm:MODES[m].bpm,swing:MODES[m].swing,objs:[],secs:[0],macro:[{t:0,v:m==='ambient'?.55:.7}],nextId:1,updated:Date.now()}; }
+function blankPiece(m,name){ return {id:uid(),name:name||('untitled \u00b7 '+m),mode:m,layout:m==='ambient'?'rings':undefined,bpm:MODES[m].bpm,swing:MODES[m].swing,objs:[],secs:[0],macro:[{t:0,v:m==='ambient'?.55:.7}],nextId:1,updated:Date.now()}; }
 function templatePiece(m){
   const P=blankPiece(m,'start \u00b7 '+m);
   const put=(kind,tick,x,y,lv,flip,rot)=>P.objs.push(makeObj(P,kind,tick,x,y,lv,flip,rot));
@@ -269,7 +313,7 @@ function setPiece(p,rebuild){ if(typeof alignScore==='function') requestAnimatio
   const was=playing; if(was) pause();
   piece=p; mode=p.mode; lib.currentId=p.id;
   if(!p.nextId) p.nextId=p.objs.reduce((m,o)=>Math.max(m,o.id+1),1);
-  p.objs.forEach(o=>{ if(!o.taps) o.taps=[]; o.kf.forEach(k=>{ if(k.rot==null) k.rot=0; if(kindDef(p.mode,o.kind)){ const [x,y]=clampIn(p.mode,o.kind,k.x,k.y); k.x=x; k.y=y; } }); });
+  p.objs.forEach(o=>{ if(!o.taps) o.taps=[]; o.kf.forEach(k=>{ if(k.rot==null) k.rot=0; if(kindDef(p.mode,o.kind)){ const [x,y]=clampIn(p.mode,o.kind,k.x,k.y,k.rot,k.flip); k.x=x; k.y=y; } }); });
   teardown(); seekTick=0; if(started) Tone.Transport.ticks=0; clearWave();
   if(rebuild!==false){ buildField(); drawTimeline(); paintBar(); renderPieces(); save(); }
 }
@@ -436,9 +480,9 @@ const AMB={
       stop(t){ env.triggerRelease(t); },
       update(s,t,how){
         const r=how==='fast'?.2:.9, sh=rot01(s.rot);
-        const idx=degFromY(s.y), fr=freqOf(noteAt('ambient',idx,-1)), fifth=s.flip?fr*.75:fr*1.5;
+        const ps=posOf('slab',s), idx=ps.deg, fr=freqOf(noteA(idx,-1)), fifth=s.flip?fr*.75:fr*1.5;
         if(idx!==last||s.flip!==lastFlip){ [t1,t2,s1,s2].forEach(x=>{ if(how==='jump') x.frequency.setValueAtTime(fr,t); else x.frequency.rampTo(fr,r,t); }); if(how==='jump') o3.frequency.setValueAtTime(fifth,t); else o3.frequency.rampTo(fifth,r,t); last=idx; lastFlip=s.flip; }
-        f.frequency.rampTo(expmap((s.x+1)/2,200,2400)*lerp(1,1.6,sh),r*.6,t); f.Q.rampTo(lerp(.3,6,sh),r,t);
+        f.frequency.rampTo(expmap(ps.b,200,2400)*lerp(1,1.6,sh),r*.6,t); f.Q.rampTo(lerp(.3,6,sh),r,t);
         gT.gain.rampTo(lerp(.5,.1,sh)*lerp(.6,1,MACRO),r,t); gS.gain.rampTo(lerp(0,.4,sh)*lerp(.2,1.5,MACRO),r,t); s2.detune.rampTo(lerp(4,45,sh),r,t); t2.detune.rampTo(lerp(2,20,sh),r,t); ch.depth=lerp(.1,.9,sh);
         o.g.gain.rampTo(s.lv?.6:.28,r,t);
       },
@@ -451,15 +495,15 @@ const AMB={
     const s=new Tone.MonoSynth({oscillator:{type:'triangle'},envelope:{attack:.6,decay:.5,sustain:.9,release:2.5},filter:{Q:1,type:'lowpass',rolloff:-12},filterEnvelope:{attack:.5,decay:.5,sustain:.8,release:1,baseFrequency:900,octaves:.6},portamento:.5}).connect(vib);
     let on=false, nextAt=null, deg=7;
     return {cont:true,
-      start(t,st){ deg=degFromY(st.y); on=true; nextAt=t+1.5+Math.random()*2; s.triggerAttack(noteAt('ambient',deg,0),t,st.lv?.8:.5); this.update(st,t,'jump'); },
+      start(t,st){ deg=posOf('bar',st).deg; on=true; nextAt=t+1.5+Math.random()*2; s.triggerAttack(noteA(deg,0),t,st.lv?.8:.5); this.update(st,t,'jump'); },
       stop(t){ on=false; s.triggerRelease(t); },
       update(st,t,how){
         const r=how==='fast'?.2:.9, sh=rot01(st.rot);
-        s.filterEnvelope.baseFrequency=expmap((st.x+1)/2,350,3200); o.g.gain.rampTo(st.lv?.45:.22,r,t);
+        s.filterEnvelope.baseFrequency=expmap(posOf('bar',st).b,350,3200); o.g.gain.rampTo(st.lv?.45:.22,r,t);
         if(!on||nextAt==null||t<nextAt) return;
-        const centre=degFromY(st.y), range=Math.round(sh*7); let step=[-2,-1,1,2,3][rnd(5)]; if(st.flip) step=-step;
+        const centre=posOf('bar',st).deg, range=Math.round(sh*7); let step=[-2,-1,1,2,3][rnd(5)]; if(st.flip) step=-step;
         deg=clamp(deg+step,centre-range,centre+range); if(range===0) deg=centre;
-        s.setNote(noteAt('ambient',deg,0),t); nextAt=t+(st.lv?1.2:2.2)+Math.random()*2.5;
+        s.setNote(noteA(deg,0),t); nextAt=t+(st.lv?1.2:2.2)+Math.random()*2.5;
       },
       dispose(){ disposeAll([s,vib,...o.nodes]); }};
   },
@@ -474,7 +518,7 @@ const AMB={
     return {cont:true,
       start(t,s){ if(!running){ nz.start(t); running=true; } this.update(s,t,'jump'); env.triggerAttack(t); },
       stop(t){ env.triggerRelease(t); },
-      update(s,t,how){ const r=how==='fast'?.2:.9, sh=rot01(s.rot); if(s.flip!==lastFlip){ nz.type=s.flip?'brown':'pink'; lastFlip=s.flip; } f.frequency.rampTo(expmap((1-s.y)/2,160,2600),r,t); f.Q.rampTo(lerp(.6,5,(s.x+1)/2),r,t); o.g.gain.rampTo(s.lv?.5:.22,r,t); lfo.frequency.rampTo(expmap(sh,.03,6),r,t); lfo.min=lerp(.75,.05,sh); },
+      update(s,t,how){ const r=how==='fast'?.2:.9, sh=rot01(s.rot); if(s.flip!==lastFlip){ nz.type=s.flip?'brown':'pink'; lastFlip=s.flip; } const ps=posOf('tri',s); f.frequency.rampTo(expmap(ps.v,160,2600),r,t); f.Q.rampTo(lerp(.6,5,ps.h),r,t); o.g.gain.rampTo(s.lv?.5:.22,r,t); lfo.frequency.rampTo(expmap(sh,.03,6),r,t); lfo.min=lerp(.75,.05,sh); },
       dispose(){ disposeAll([nz,f,env,wob,lfo,...o.nodes]); }};
   },
   circle(bus){
@@ -483,10 +527,13 @@ const AMB={
     const pluck=new Tone.PluckSynth({attackNoise:.8,dampening:4200,resonance:.965,release:1}).connect(o.g);
     const PENT=[0,2,3,4,6,7,9,10,11,13]; let nextAt=null, lastN=null, lastPoke=0;
     const ring=(t,s,vel)=>{
-      let n=PENT[Math.round(degFromY(s.y)/14*9)]; if(lastN!=null&&Math.random()<.4) n=PENT[clamp(PENT.indexOf(lastN)+(Math.random()<.5?-1:1),0,9)]; lastN=n;
-      const note=noteAt('ambient',n,1), sh=rot01(s.rot);
-      if(s.flip){ o.g.gain.setValueAtTime(.55*vel,t); pluck.dampening=expmap((s.x+1)/2,1800,7000); pluck.attackNoise=lerp(.3,3,sh); pluck.triggerAttack(note,t); }
-      else { bell.modulationIndex.setValueAtTime(expmap((s.x+1)/2,3,22)*lerp(.6,1.6,sh),t); bell.harmonicity.setValueAtTime([1,2,3.01,5.07,6.3,8.1][Math.round(sh*5)],t); bell.triggerAttackRelease(note,'2n',t,vel); }
+      const ps=posOf('circle',s); let n;
+      if(ps.sec!=null){ n=ps.deg; if(Math.random()<.4) n=ps.ring*7+FIFTHS[(ps.sec+(Math.random()<.5?6:1))%7]; }   /* rings: sometimes a fifth-neighbour */
+      else { n=PENT[Math.round(ps.deg/14*9)]; if(lastN!=null&&Math.random()<.4) n=PENT[clamp(PENT.indexOf(lastN)+(Math.random()<.5?-1:1),0,9)]; }
+      lastN=n;
+      const note=noteA(n,1), sh=rot01(s.rot);
+      if(s.flip){ o.g.gain.setValueAtTime(.55*vel,t); pluck.dampening=expmap(ps.b,1800,7000); pluck.attackNoise=lerp(.3,3,sh); pluck.triggerAttack(note,t); }
+      else { bell.modulationIndex.setValueAtTime(expmap(ps.b,3,22)*lerp(.6,1.6,sh),t); bell.harmonicity.setValueAtTime([1,2,3.01,5.07,6.3,8.1][Math.round(sh*5)],t); bell.triggerAttackRelease(note,'2n',t,vel); }
     };
     return {cont:false,
       maybeFire(t,s){
@@ -503,9 +550,9 @@ const AMB={
     const s=new Tone.PolySynth(Tone.FMSynth,{harmonicity:1,modulationIndex:1.2,oscillator:{type:'sine'},envelope:{attack:.5,decay:1.5,sustain:.5,release:3.5},modulation:{type:'sine'},modulationEnvelope:{attack:.3,decay:1,sustain:.2,release:1}}).connect(o.g); s.maxPolyphony=16;
     let nextAt=null, lastPoke=0;
     const chord=(t,st,vel)=>{
-      const r=Math.round(degFromY(st.y)/14*6); let notes=[r,r+2,r+4,r+6]; if(st.flip) notes=[r,r+2,r+4-7,r+6-7];
-      s.set({modulationIndex:expmap((st.x+1)/2,.5,3.5)});
-      const strum=rot01(st.rot)*1.6; notes.forEach((n,i)=>s.triggerAttackRelease(noteAt('ambient',n,0),4.5,t+i*strum/3,vel));
+      const ps=posOf('rrect',st), r=ps.sec!=null?ps.deg:Math.round(ps.deg/14*6); let notes=[r,r+2,r+4,r+6]; if(st.flip) notes=[r,r+2,r+4-7,r+6-7];
+      s.set({modulationIndex:expmap(ps.b,.5,3.5)});
+      const strum=rot01(st.rot)*1.6; notes.forEach((n,i)=>s.triggerAttackRelease(noteA(n,0),4.5,t+i*strum/3,vel));
     };
     return {cont:false,
       maybeFire(t,st){
@@ -524,14 +571,14 @@ const AMB={
     const s=new Tone.PolySynth(Tone.Synth,{oscillator:{type:'triangle'},envelope:{attack:2.2,decay:1,sustain:.9,release:5}}).connect(f); s.maxPolyphony=16;
     const VOICINGS=[[0,4,7,11],[0,4,7,9],[0,2,4,7],[0,2,4,6],[0,1,2,4],[0,1,2,3]];
     let cur=null, lastChange=-10, on=false;
-    const notesFor=st=>{ const r=Math.round(degFromY(st.y)/14*7), v=VOICINGS[Math.round(rot01(st.rot)*5)]; const n=v.map(d=>r+d); if(st.flip) n[3]-=7; return n; };
+    const notesFor=st=>{ const ps=posOf('rect',st), r=ps.sec!=null?ps.deg:Math.round(ps.deg/14*7), v=VOICINGS[Math.round(rot01(st.rot)*5)]; const n=v.map(d=>r+d); if(st.flip) n[3]-=7; return n; };
     return {cont:true,
-      start(t,st){ on=true; cur=notesFor(st); lastChange=t; s.triggerAttack(cur.map(n=>noteAt('ambient',n,0)),t,st.lv?.7:.45); this.update(st,t,'jump'); },
+      start(t,st){ on=true; cur=notesFor(st); lastChange=t; s.triggerAttack(cur.map(n=>noteA(n,0)),t,st.lv?.7:.45); this.update(st,t,'jump'); },
       stop(t){ on=false; s.releaseAll(t); cur=null; },
       update(st,t,how){
-        const r=how==='fast'?.25:.9; f.frequency.rampTo(expmap((st.x+1)/2,300,4000),r,t); o.g.gain.rampTo(st.lv?.4:.2,r,t);
+        const r=how==='fast'?.25:.9; f.frequency.rampTo(expmap(posOf('rect',st).b,300,4000),r,t); o.g.gain.rampTo(st.lv?.4:.2,r,t);
         if(!on) return; const n=notesFor(st);
-        if(n.join()!==cur.join()&&t-lastChange>.45){ s.releaseAll(t); s.triggerAttack(n.map(x=>noteAt('ambient',x,0)),t+.03,st.lv?.7:.45); cur=n; lastChange=t; }
+        if(n.join()!==cur.join()&&t-lastChange>.45){ s.releaseAll(t); s.triggerAttack(n.map(x=>noteA(x,0)),t+.03,st.lv?.7:.45); cur=n; lastChange=t; }
       },
       dispose(){ disposeAll([s,f,...o.nodes]); }};
   },
@@ -547,7 +594,7 @@ const AMB={
       stop(t){ on=false; },
       update(st,t,how){
         if(!on||t<nextAt) return;
-        const fq=expmap((1-st.y)/2,40,110), click=(st.x+1)/2, vel=st.lv?.9:.5;
+        const ps=posOf('trap',st), fq=expmap(ps.v,40,110), click=ps.h, vel=st.lv?.9:.5;
         s.triggerAttackRelease(fq,'8n',t,vel); n.triggerAttackRelease(.05,t,vel*click*.5);
         if(st.flip){ s.triggerAttackRelease(fq,'8n',t+.18,vel*.6); }
         nextAt=t+expmap(1-rot01(st.rot),.5,6);
@@ -566,10 +613,10 @@ const AMB={
       start(t,s){ if(!running){ osc.start(t); running=true; } this.update(s,t,'jump'); env.triggerAttack(t); },
       stop(t){ env.triggerRelease(t); },
       update(s,t,how){
-        const r=how==='fast'?.2:.9, sh=rot01(s.rot), idx=degFromY(s.y);
+        const r=how==='fast'?.2:.9, sh=rot01(s.rot), ps=posOf('fan',s), idx=ps.deg;
         if(s.flip!==lastFlip){ osc.type=s.flip?'square':'sawtooth'; lastFlip=s.flip; }
-        if(idx!==last){ const fr=freqOf(noteAt('ambient',idx,-1)); if(how==='jump') osc.frequency.setValueAtTime(fr,t); else osc.frequency.rampTo(fr,r,t); last=idx; }
-        lfo.max=expmap((s.x+1)/2,500,6000); lfo.frequency.rampTo(expmap(sh,.04,3),r,t); o.g.gain.rampTo(s.lv?.45:.2,r,t);
+        if(idx!==last){ const fr=freqOf(noteA(idx,-1)); if(how==='jump') osc.frequency.setValueAtTime(fr,t); else osc.frequency.rampTo(fr,r,t); last=idx; }
+        lfo.max=expmap(ps.b,500,6000); lfo.frequency.rampTo(expmap(sh,.04,3),r,t); o.g.gain.rampTo(s.lv?.45:.2,r,t);
       },
       dispose(){ disposeAll([osc,f,lfo,env,...o.nodes]); }};
   },
@@ -585,13 +632,13 @@ const AMB={
       start(t,st){ on=true; nextAt=t+.05; },
       stop(t){ on=false; },
       update(st,t,how){
-        f.frequency.setValueAtTime(expmap((st.x+1)/2,800,9000),t); if(!on) return;
-        const dens=(st.lv?9:3)*lerp(.5,1.6,MACRO), spread=Math.round(rot01(st.rot)*10), centre=degFromY(st.y);
+        const ps=posOf('cloud',st); f.frequency.setValueAtTime(expmap(ps.b,800,9000),t); if(!on) return;
+        const dens=(st.lv?9:3)*lerp(.5,1.6,MACRO), spread=Math.round(rot01(st.rot)*10), centre=ps.deg;
         let guard=0;
         while(nextAt<=t+.13&&guard++<12){
           const at=Math.max(nextAt,t+.005), d=centre+Math.round((Math.random()*2-1)*spread);
-          if(st.flip){ nf.frequency.setValueAtTime(expmap((1-st.y)/2,1200,9000)*(1+(Math.random()-.5)*.6),at); n.triggerAttackRelease(.04,at,.25+Math.random()*.3); }
-          else s.triggerAttackRelease(noteAt('ambient',d,1),.12,at,.15+Math.random()*.35);
+          if(st.flip){ nf.frequency.setValueAtTime(expmap(ps.v,1200,9000)*(1+(Math.random()-.5)*.6),at); n.triggerAttackRelease(.04,at,.25+Math.random()*.3); }
+          else s.triggerAttackRelease(noteA(d,1),.12,at,.15+Math.random()*.35);
           nextAt=at+(1/dens)*(.4+Math.random()*1.2);
         }
       },
@@ -651,7 +698,7 @@ function seek(tk){
   if(was) play();
 }
 function rewind(){ seek(0); }
-function paintBar(){ $('#play').textContent=playing?'\u25a0':'\u25b6'; $('#play').setAttribute('aria-label',playing?'Pause':'Play'); $('#pieceName').textContent=cur().name; $('#bpm').textContent=cur().bpm; $('#bpmWrap').hidden=!MD().grid;
+function paintBar(){ if(typeof paintGuideBtn==='function'&&$('#noteBtn')) paintGuideBtn(); $('#play').textContent=playing?'\u25a0':'\u25b6'; $('#play').setAttribute('aria-label',playing?'Pause':'Play'); $('#pieceName').textContent=cur().name; $('#bpm').textContent=cur().bpm; $('#bpmWrap').hidden=!MD().grid;
   $('#hint').textContent=(MD().grid?'tap = soft / loud \u00b7 hold = new pattern \u00b7 ':'tap = soft / loud \u00b7 hold = flip \u00b7 ')+'double tap = out \u00b7 drag = move \u00b7 handle = turn \u00b7 drag a shape in from the right column \u00b7 stopped: edits land at the score time \u00b7 rim dot = whole mix (rings = last cycle, low\u2192top) \u00b7 score: tap = seek \u00b7 \u25cb in \u00b7 \u25b3 tap \u00b7 \u25bd hold \u00b7 \u25cf out \u00b7 inner line = turn'; }
 function secOf(tk){ return tk*(60/cur().bpm/4); }
 function mmss(tk){ const s=secOf(tk); const m=Math.floor(s/60), r=Math.floor(s%60); return (m<10?'0':'')+m+':'+(r<10?'0':'')+r; }
@@ -660,7 +707,7 @@ function mmss(tk){ const s=secOf(tk); const m=Math.floor(s/60), r=Math.floor(s%6
 const field=$('#field'), CX=176, CY=200, R=150, RF=100, RO=160;
 const pts=a=>a.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
 const fx=x=>CX+x*RF, fy=y=>CY+y*RF;
-let gTrails, gObjs, arcEl, hdEl, phEl, gWave, objEls={}, selId=null, waveUntil=0;
+let gTrails, gObjs, arcEl, hdEl, phEl, gWave, gGuide, objEls={}, selId=null, waveUntil=0;
 function shapeEl(shape,scale,cls){
   const d=SHAPES[shape]; let e;
   if(d.el==='polygon') e=sv('polygon',{points:pts(d.pts.map(p=>[p[0]*scale,p[1]*scale]))});
@@ -679,6 +726,7 @@ function buildField(){
   field.appendChild(sv('circle',{cx:CX,cy:CY,r:R,class:'hair'}));
   field.appendChild(sv('circle',{cx:CX,cy:CY,r:R-3,class:'hair'}));
   if(grid) for(let i=0;i<16;i++){ const a=i*Math.PI*2/16-Math.PI/2, l=i%4===0?7:3; field.appendChild(sv('line',{x1:(CX+Math.cos(a)*(R-3)).toFixed(1),y1:(CY+Math.sin(a)*(R-3)).toFixed(1),x2:(CX+Math.cos(a)*(R-3-l)).toFixed(1),y2:(CY+Math.sin(a)*(R-3-l)).toFixed(1),class:'hair'})); }
+  gGuide=sv('g',{class:'guide'}); field.appendChild(gGuide); guideKey=null;
   gTrails=sv('g',{}); gObjs=sv('g',{}); field.appendChild(gTrails); field.appendChild(gObjs);
   arcEl=sv('path',{d:'',stroke:'url(#arcg)','stroke-width':'3',fill:'none','stroke-linecap':'round'}); field.appendChild(arcEl);
   hdEl=sv('circle',{id:'hd',cx:CX,cy:CY-RO,r:7,fill:'var(--paper)',stroke:'#FF2D55','stroke-width':'1.2'}); field.appendChild(hdEl);
@@ -728,7 +776,7 @@ function renderField(){
     const s=stateAt(o,t); placeObj(o,e,s);
     e.g.classList.toggle('gone',o.exit!=null&&t>=o.exit);
     e.g.classList.toggle('pre',t<o.enter);
-    e.g.style.display=(t<o.enter&&playing)?'none':'';
+    e.g.style.display=(t<o.enter)?'none':'';   /* a shape that has not entered yet is not shown */
     /* the trail: the newest movement is full strength, older movement fades out over the window. 8 opacity steps, one path each */
     const win=MD().grid?96:160, gone=o.exit!=null&&t>=o.exit, STEPS=8;
     const k=o.kf.filter(x=>x.t<=t+.5&&x.t>=t-win); if(k.length&&k[k.length-1].t<t-.5) k.push(Object.assign({},s,{t}));
@@ -765,15 +813,15 @@ function bindObj(g,o){
     if(!down) return; const p=svgPt(e);
     if(!moved&&Math.hypot(p.x-sx,p.y-sy)<4) return;
     if(!moved){ moved=true; o._drag=true; if(timer){ clearTimeout(timer); timer=null; } if(playing){ const t0=curTick(); o.kf=o.kf.filter(k=>k.t<=t0+.5); } }
-    const [cx,cy]=clampIn(mode,o.kind,(p.x-CX)/RF,(p.y-CY)/RF), x=cx, y=cy;
-    const t=curTick(), now=performance.now();
+    const t=curTick(), now=performance.now(), s0=stateAt(o,t);
+    const [cx,cy]=clampIn(mode,o.kind,(p.x-CX)/RF,(p.y-CY)/RF,s0.rot||0,s0.flip), x=cx, y=cy;
     if(!playing||now-lastRec>60){ setKf(o,playing?t:Math.max(t,o.enter),{x:cx,y:cy}); lastRec=now; }
     liveUpdate(o,Object.assign(stateAt(o,t),{x:cx,y:cy}),true);
     const e2=objEls[o.id]; e2.g.setAttribute('transform','translate('+(CX+x*RF).toFixed(1)+' '+(CY+y*RF).toFixed(1)+')');
   });
   const up=e=>{
     if(!down) return; down=false; o._drag=false; g.classList.remove('drag'); if(timer){ clearTimeout(timer); timer=null; }
-    if(moved){ const p=svgPt(e); const [x,y]=clampIn(mode,o.kind,(p.x-CX)/RF,(p.y-CY)/RF); setKf(o,playing?curTick():Math.max(curTick(),o.enter),{x,y}); }
+    if(moved){ const p=svgPt(e), s1=stateAt(o,curTick()); const [x,y]=clampIn(mode,o.kind,(p.x-CX)/RF,(p.y-CY)/RF,s1.rot||0,s1.flip); setKf(o,playing?curTick():Math.max(curTick(),o.enter),{x,y}); }
     else {
       const now=performance.now();
       if(now-lastTap<320){ lastTap=0; if(tapT){ clearTimeout(tapT); tapT=null; } exitObject(o); renderField(); drawTimeline(); save(); return; }
@@ -793,8 +841,10 @@ function bindRotate(rh,o){
     const a=Math.atan2(p.y-fy(s.y),p.x-fx(s.x))*180/Math.PI+90;
     if(prev==null){ prev=a; return; } let d=a-prev; if(d>180) d-=360; if(d<-180) d+=360; prev=a; acc+=d;
     const now=performance.now();
-    if(!playing||now-lastRec>60){ setKf(o,playing?t:Math.max(t,o.enter),{rot:acc}); lastRec=now; }
-    const ns=Object.assign({},s,{rot:acc}); liveUpdate(o,ns,true);
+    const [kx,ky]=clampIn(mode,o.kind,s.x,s.y,acc,s.flip);
+    if(!playing||now-lastRec>60){ setKf(o,playing?t:Math.max(t,o.enter),{rot:acc,x:kx,y:ky}); lastRec=now; }
+    const ns=Object.assign({},s,{rot:acc,x:kx,y:ky}); liveUpdate(o,ns,true);
+    objEls[o.id].g.setAttribute('transform','translate('+fx(kx).toFixed(1)+' '+fy(ky).toFixed(1)+')');
     const e2=objEls[o.id]; e2.inner.setAttribute('transform','rotate('+acc.toFixed(1)+')'+(s.flip&&e2.sd.flip==='x'?' scale(-1 1)':(s.flip&&e2.sd.flip==='y'?' scale(1 -1)':''))); e2.rh.setAttribute('transform','rotate('+acc.toFixed(1)+')');
   });
   const up=()=>{ if(!down) return; down=false; o._drag=false; liveUpdate(o,stateAt(o,curTick()),true); renderField(); drawTimeline(); save(); };
@@ -803,7 +853,7 @@ function bindRotate(rh,o){
 function hold(o){
   const t=curTick();
   if(MD().grid){ generate(o,mode); o.vars.push(Math.round(t)); }
-  else { const s=stateAt(o,t); setKf(o,Math.max(t,o.enter),{flip:s.flip?0:1}); o.vars.push(Math.round(Math.max(t,o.enter))); liveUpdate(o,stateAt(o,Math.max(t,o.enter)),true); }
+  else { const s=stateAt(o,t), nf=s.flip?0:1, [kx,ky]=clampIn(mode,o.kind,s.x,s.y,s.rot||0,nf); setKf(o,Math.max(t,o.enter),{flip:nf,x:kx,y:ky}); o.vars.push(Math.round(Math.max(t,o.enter))); liveUpdate(o,stateAt(o,Math.max(t,o.enter)),true); }
   renderField(); drawTimeline(); save();
 }
 /* the ring handle: drag around the rim to set the ring value (recorded in time) */
@@ -868,15 +918,17 @@ function bindLibDrag(g,k){
     if(!down) return; const p=svgPt(e);
     if(!moved){ if(Math.hypot(p.x-sx,p.y-sy)<4) return; moved=true; ghost=sv('g',{class:'obj ghost'}); ghost.appendChild(shapeEl(k.shape,k.scale,'sh')); gObjs.appendChild(ghost); }
     const inside=Math.hypot(p.x-CX,p.y-CY)<=R; ghost.classList.toggle('out',!inside);
-    let gx=p.x, gy=p.y; if(inside){ const [x,y]=clampIn(mode,k.kind,(p.x-CX)/RF,(p.y-CY)/RF); gx=CX+x*RF; gy=CY+y*RF; }
+    let gx=p.x, gy=p.y; if(inside){ const [x,y]=clampIn(mode,k.kind,(p.x-CX)/RF,(p.y-CY)/RF,(cur().objs.length*47)%180,0); gx=CX+x*RF; gy=CY+y*RF; }
+    ghost.firstChild.setAttribute('transform','rotate('+((cur().objs.length*47)%180)+')');
+    libDrag=inside?{kind:k.kind,x:(gx-CX)/RF,y:(gy-CY)/RF}:{kind:k.kind,x:null,y:null};
     ghost.setAttribute('transform','translate('+gx.toFixed(1)+' '+gy.toFixed(1)+')');
   });
-  const up=e=>{ if(!down) return; down=false; if(ghost){ ghost.remove(); ghost=null; } if(!moved) return; const p=svgPt(e); if(Math.hypot(p.x-CX,p.y-CY)<=R){ const [x,y]=clampIn(mode,k.kind,(p.x-CX)/RF,(p.y-CY)/RF); addObjectAt(k.kind,x,y); } };
+  const up=e=>{ if(!down) return; down=false; libDrag=null; if(ghost){ ghost.remove(); ghost=null; } if(!moved) return; const p=svgPt(e); if(Math.hypot(p.x-CX,p.y-CY)<=R){ addObjectAt(k.kind,(p.x-CX)/RF,(p.y-CY)/RF); } };
   g.addEventListener('pointerup',up); g.addEventListener('pointercancel',up);
 }
 function addObjectAt(kind,x,y){
-  [x,y]=clampIn(mode,kind,x,y);
   const t=Math.round(curTick()); const i=cur().objs.length;
+  [x,y]=clampIn(mode,kind,x,y,(i*47)%180,0);
   const o=makeObj(cur(),kind,t,x,y,0,0,(i*47)%180);
   cur().objs.push(o); mountObj(o); select(o.id); renderField(); drawTimeline(); save();
 }
@@ -988,7 +1040,7 @@ $('#rew').onclick=rewind;
   b.addEventListener('pointermove',e=>{ if(!drag) return; const v=clamp(Math.round(sv0+(sy-e.clientY)/4),40,200); cur().bpm=v; b.textContent=v; if(started) Tone.Transport.bpm.rampTo(v,.1); });
   const up=()=>{ if(drag){ drag=false; save(); drawTimeline(); } }; b.addEventListener('pointerup',up); b.addEventListener('pointercancel',up);
 })();
-['#play','#rew','#menuBtn','#fsBtn','#pieceName'].forEach(id=>$(id).addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); $(id).click(); } }));
+['#play','#rew','#menuBtn','#fsBtn','#noteBtn','#pieceName'].forEach(id=>$(id).addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); $(id).click(); } }));
 document.addEventListener('keydown',e=>{ if(e.key===' '&&e.target===document.body){ e.preventDefault(); if(playing) pause(); else play(); } });
 
 /* ---------- loops ---------- */
@@ -997,6 +1049,7 @@ let frames=0, fpsT=performance.now(), FPS=0, lastTl=0;
   frames++; const now=performance.now(); if(now-fpsT>=1000){ FPS=frames*1000/(now-fpsT); frames=0; fpsT=now; }
   if(playing){ renderField(); updateNow(); if(now-lastTl>400){ drawTimeline(); lastTl=now; } }
   if(gWave){ sampleWave(); drawWave(); }
+  if(gGuide) updateGuide();
   requestAnimationFrame(raf);
 })();
 setInterval(()=>{
@@ -1007,6 +1060,95 @@ setInterval(()=>{
   $('#logErr').textContent=LOG.err;
 },500);
 $('#logReset').onclick=()=>{ LOG.n=0; LOG.late=0; LOG.sum=0; LOG.min=Infinity; LOG.err=''; };
+/* ---------- note guide: what the up/down (and left/right) position of a shape plays. read from the same code the voices use ---------- */
+let showGuide=false, guideKey=null, guideRows=[], libDrag=null;
+try{ showGuide=localStorage.getItem('sukiyaki-guide')==='1'; }catch(e){}
+const G_PENT=[0,2,3,4,6,7,9,10,11,13];                                   /* = PENT in AMB.circle */
+const G_CH=['Dm7','Em7','Fmaj7','G7','Am7','Bm7b5','Cmaj7'];            /* degree r, r+2, r+4, r+6 of D dorian (AMB.rrect) */
+const G_X={slab:['dark','bright'],bar:['dark','bright'],tri:['breathy','whistle'],circle:['soft','metallic'],rrect:['soft','bright'],rect:['dark','bright'],trap:['soft','click'],fan:['low sweep','high sweep'],cloud:['dark','bright']};
+function guideLabel(kind,k){
+  switch(kind){
+    case 'slab': case 'fan': return noteAt('ambient',k,-1);              /* degFromY, shift -1 */
+    case 'bar': return noteAt('ambient',k,0);
+    case 'cloud': return noteAt('ambient',k,1);
+    case 'circle': return noteAt('ambient',G_PENT[Math.round(k/14*9)],1);
+    case 'rrect': return G_CH[Math.round(k/14*6)];
+    case 'rect': return noteAt('ambient',Math.round(k/14*7),0)+' chord';
+    default: return SCALES.ambient.notes[k%7];
+  }
+}
+function guideCaption(kind){
+  if(!kind) return 'up / down = note \u00b7 select a shape to see its own notes';
+  const c={slab:'drone',bar:'wanders around this note',fan:'wave',cloud:'grains scatter around this note',circle:'bells near this note',rrect:'chord',rect:'held chord, rotation = voicing',tri:'up / down = band centre (no note)',trap:'up / down = drum pitch (no note)'}[kind]||'';
+  return kind+' \u00b7 '+c;
+}
+/* rings layout: 7 directions x 3 rings, scaled to how far this shape can travel */
+function ringsLabel(kind,deg){
+  switch(kind){
+    case 'slab': case 'fan': return noteA(deg,-1);
+    case 'bar': return noteA(deg,0);
+    case 'cloud': case 'circle': return noteA(deg,1);
+    case 'rrect': return G_CH[deg%7];
+    case 'rect': return noteA(deg,0);
+    default: return SCALES.ambient.notes[deg%7];
+  }
+}
+function buildGuideRings(kind){
+  const L=(kind?limOf(kind):1)*RF, LM=(kind?Math.max(limOf(kind),reachMax(kind)):1)*RF, W=360/7, pt=(r,a)=>[CX+r*Math.sin(a*Math.PI/180),CY-r*Math.cos(a*Math.PI/180)], fs=clamp(L/15,4.5,7);
+  if(kind!=='tri'&&kind!=='trap'){
+    for(let ring=0;ring<3;ring++) for(let i=0;i<7;i++){
+      const r0=L*ring/3, r1=ring===2?LM:L*(ring+1)/3, a0=i*W-W/2, a1=a0+W;
+      const [x0,y0]=pt(r1,a0),[x1,y1]=pt(r1,a1),[x2,y2]=pt(r0,a1),[x3,y3]=pt(r0,a0);
+      const d='M'+x0.toFixed(1)+','+y0.toFixed(1)+' A'+r1+','+r1+' 0 0 1 '+x1.toFixed(1)+','+y1.toFixed(1)+(r0>0?' L'+x2.toFixed(1)+','+y2.toFixed(1)+' A'+r0+','+r0+' 0 0 0 '+x3.toFixed(1)+','+y3.toFixed(1):' L'+CX+','+CY)+' Z';
+      const cell=sv('path',{d,class:'cell'}); gGuide.appendChild(cell);
+      const [tx,ty]=pt(ring===2?(L*2/3+LM)/2:L*(ring+.55)/3,i*W); const t=sv('text',{x:tx.toFixed(1),y:(ty+fs*.35).toFixed(1),'text-anchor':'middle','font-size':fs}); t.textContent=ringsLabel(kind,ring*7+FIFTHS[i]); gGuide.appendChild(t);
+      guideRows.push({sec:i,ring,rect:cell,t});
+    }
+    [L/3,L*2/3,LM].forEach(rr=>gGuide.appendChild(sv('circle',{cx:CX,cy:CY,r:rr.toFixed(1),class:'gl'})));
+    for(let i=0;i<7;i++){ const [x,y]=pt(LM,i*W-W/2); gGuide.appendChild(sv('line',{x1:CX,y1:CY,x2:x.toFixed(1),y2:y.toFixed(1)})); }
+  } else {
+    [0,1/3,2/3,1].forEach(f=>{ if(f>0) gGuide.appendChild(sv('circle',{cx:CX,cy:CY,r:(LM*f).toFixed(1),class:'gl'})); const v=kind==='tri'?expmap(f,160,2600):expmap(f,40,110); const t=sv('text',{x:CX+3,y:(CY-LM*f-2).toFixed(1)}); t.textContent=v.toFixed(0)+' Hz'; gGuide.appendChild(t); });
+  }
+  const r=R-3, xw=G_X[kind]||['dark','bright'];
+  const l1=(kind==='tri'||kind==='trap')?'angle: top '+xw[0]+' \u2192 bottom '+xw[1]:'inside each ring: inner edge '+xw[0]+' \u2192 outer edge '+xw[1];
+  const l2=!kind?'angle = note (fifths, D at top) \u00b7 ring = octave \u00b7 select a shape':(kind==='tri'||kind==='trap')?kind+' \u00b7 centre \u2192 edge = pitch (no note)':kind+' \u00b7 angle = '+(kind==='rrect'?'chord':'note')+' (fifths) \u00b7 ring = octave';
+  [l1,l2].forEach((tx,i)=>{ const t=sv('text',{x:CX,y:CY+r-20+i*10,'text-anchor':'middle',class:'cap'}); t.textContent=tx; gGuide.appendChild(t); });
+}
+function buildGuide(kind){
+  gGuide.innerHTML=''; guideRows=[];
+  if(isRings()) return buildGuideRings(kind);
+  const r=R-3, yAt=y=>CY+y*RF, half=x=>Math.sqrt(Math.max(0,r*r-(x-CY)*(x-CY)));
+  if(kind==='tri'||kind==='trap'){
+    for(let i=0;i<=8;i++){ const y=-1+i*.25, py=yAt(y), w=half(py); const v=kind==='tri'?expmap((1-y)/2,160,2600):expmap((1-y)/2,40,110);
+      gGuide.appendChild(sv('line',{x1:CX-w,x2:CX+w,y1:py,y2:py})); const t=sv('text',{x:CX-w+4,y:py-2}); t.textContent=v.toFixed(0)+' Hz'; gGuide.appendChild(t); }
+  } else {
+    let rows=[]; for(let k=0;k<=14;k++){ const lab=guideLabel(kind,k); const top=k===14?-r/RF:1-(2*k+1)/14, bot=k===0?r/RF:1-(2*k-1)/14;
+      if(rows.length&&rows[rows.length-1].lab===lab) rows[rows.length-1].top=top; else rows.push({lab,top,bot}); }
+    rows.forEach(rw=>{ const y1=yAt(rw.top), y2=yAt(rw.bot), mid=(y1+y2)/2, w=half(mid);
+      const rect=sv('rect',{x:CX-r,y:y1,width:2*r,height:y2-y1,'clip-path':'url(#gclip)'}); gGuide.appendChild(rect);
+      if(rw.bot<r/RF){ const w2=half(y2); gGuide.appendChild(sv('line',{x1:CX-w2,x2:CX+w2,y1:y2,y2:y2})); }
+      const t=sv('text',{x:CX-w+5,y:mid+2.5}); t.textContent=rw.lab; gGuide.appendChild(t);
+      guideRows.push({top:rw.top,bot:rw.bot,rect,t}); });
+  }
+  const xl=(G_X[kind]||['',''])[0], xr=(G_X[kind]||['',''])[1];
+  if(xl){ const t=sv('text',{x:CX,y:CY+r-20,'text-anchor':'middle',class:'cap'}); t.textContent='\u2190 '+xl+'   left / right   '+xr+' \u2192'; gGuide.appendChild(t); }
+  const c=sv('text',{x:CX,y:CY+r-10,'text-anchor':'middle',class:'cap'}); c.textContent=guideCaption(kind); gGuide.appendChild(c);
+}
+function updateGuide(){
+  const on=showGuide&&mode==='ambient';
+  gGuide.style.display=on?'':'none'; if(!on) return;
+  let kind=null, st=null;
+  if(libDrag){ kind=libDrag.kind; st=libDrag.y==null?null:{x:libDrag.x,y:libDrag.y}; }
+  else if(selId!=null){ const o=cur().objs.find(q=>String(q.id)===String(selId)); if(o){ kind=o.kind; st=stateAt(o,curTick()); } }
+  const key=(kind||'-')+'|'+(isRings()?'rings':'vertical');
+  if(key!==guideKey||!gGuide.firstChild){ if(!field.querySelector('#gclip')){ const d=field.querySelector('defs'); d.insertAdjacentHTML('beforeend','<clipPath id="gclip"><circle cx="'+CX+'" cy="'+CY+'" r="'+(R-3)+'"/></clipPath>'); } buildGuide(kind); guideKey=key; }
+  if(isRings()){ const ps=(st&&kind)?posOf(kind,st):null; guideRows.forEach(g=>{ const hit=!!ps&&ps.sec===g.sec&&ps.ring===g.ring; g.rect.classList.toggle('on',hit); g.t.classList.toggle('on',hit); }); }
+  else { const y=st?st.y:null; guideRows.forEach(g=>{ const hit=y!=null&&y>=g.top&&y<g.bot; g.rect.classList.toggle('on',hit); g.t.classList.toggle('on',hit); }); }
+}
+function paintGuideBtn(){ const b=$('#noteBtn'); b.classList.toggle('on',showGuide); b.hidden=mode!=='ambient';
+  const L=$('#opLayout'); if(L){ L.hidden=mode!=='ambient'; L.textContent='notes: '+(isRings()?'rings':'up / down'); } }
+$('#opLayout').onclick=()=>{ if(mode!=='ambient') return; cur().layout=isRings()?'vertical':'rings'; guideKey=null; save(); paintGuideBtn(); renderField(); };
+$('#noteBtn').onclick=()=>{ showGuide=!showGuide; try{ localStorage.setItem('sukiyaki-guide',showGuide?'1':'0'); }catch(e){} paintGuideBtn(); };
 function alignScore(){ const fr=field.getBoundingClientRect(), tr=tl.getBoundingClientRect(); const ringTop=fr.top+fr.height*((CY-RO)/400); const want=Math.max(16,Math.round(ringTop-tr.top)); if(Math.abs(want-TY0)>1){ TY0=want; drawTimeline(); } }
 window.addEventListener('resize',()=>{ alignScore(); drawTimeline(); });
 function showErr(msg){ const e=$('#err'); e.textContent=msg; e.hidden=false; }
@@ -1014,7 +1156,7 @@ function showErr(msg){ const e=$('#err'); e.textContent=msg; e.hidden=false; }
 /* ---------- boot ---------- */
 function boot(){
   if(typeof Tone==='undefined'){ showErr('Tone.js failed to load. Check the connection and reload.'); return; }
-  loadLib(); buildField(); drawTimeline(); paintBar(); renderPieces(); requestAnimationFrame(()=>{ alignScore(); });
+  loadLib(); buildField(); drawTimeline(); paintBar(); paintGuideBtn(); renderPieces(); requestAnimationFrame(()=>{ alignScore(); });
 }
 if(typeof Tone==='undefined'){ const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js'; s.onload=boot; s.onerror=boot; document.head.appendChild(s); } else boot();
 })();
