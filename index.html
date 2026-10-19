@@ -31,13 +31,16 @@ body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);f
 .main{display:flex;flex-direction:column;gap:8px;min-width:0}
 .col{display:flex;flex-direction:column;gap:6px;min-width:0}
 .score{min-width:0;order:2}
-.bar{display:flex;align-items:center;gap:12px;height:30px;font-size:11px;letter-spacing:.06em;font-variant-numeric:tabular-nums;min-width:0;width:100%}
+.bar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;height:30px;font-size:11px;letter-spacing:.06em;font-variant-numeric:tabular-nums;min-width:0;width:100%}
+.bar .transport{display:flex;align-items:center;gap:14px;justify-self:center}
+.bar .right{display:flex;align-items:center;gap:12px;justify-self:end;min-width:0}
+@media (max-width:600px){ #ringv{display:none} #pieceName{max-width:96px} .bar{gap:8px} .bar .transport{gap:10px} }
 .b{cursor:pointer;padding:4px 2px;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;white-space:nowrap}
 .b:focus-visible{outline:1px solid var(--ring);outline-offset:2px}
 .dim{color:var(--ink-2)}
 #bpm{touch-action:none;cursor:ns-resize;min-width:30px;text-align:right}
 #clock{color:var(--ink-2)}
-#pieceName{margin-left:auto;overflow:hidden;text-overflow:ellipsis;min-width:0;border-bottom:.6px solid var(--line)}
+#pieceName{overflow:hidden;text-overflow:ellipsis;min-width:0;border-bottom:.6px solid var(--line)}
 #menuBtn{font-size:14px;line-height:1}
 .drawer{border:.6px solid var(--line-2);padding:8px 10px;display:flex;flex-direction:column;gap:8px;font-size:11px}
 .drawer[hidden],#bpmWrap[hidden],#pasteBox[hidden]{display:none}
@@ -108,14 +111,16 @@ summary{cursor:pointer;letter-spacing:.08em;padding:4px 0}
 
 <div class="wrap">
   <div class="bar">
-    <span class="b" id="play" role="button" tabindex="0" aria-label="Play">&#x25b6;</span>
+    <span class="lead"></span>
+    <span class="transport"><span class="b" id="play" role="button" tabindex="0" aria-label="Play">&#x25b6;</span>
     <span class="b" id="rew" role="button" tabindex="0" aria-label="Rewind">&#x27f2;</span>
     <span id="bpmWrap"><span id="bpm" class="b" title="drag">124</span> <span class="dim">bpm</span></span>
     <span id="clock">00:00</span>
-    <span id="ringv" class="dim">ring 0.50</span>
+    <span id="ringv" class="dim">ring 0.50</span></span>
+    <span class="right">
     <span class="b" id="pieceName" role="button" tabindex="0">&#x2014;</span>
     <span class="b" id="fsBtn" role="button" tabindex="0" aria-label="Full screen">&#x26f6;</span>
-    <span class="b" id="menuBtn" role="button" tabindex="0" aria-label="Pieces">&#x2261;</span>
+    <span class="b" id="menuBtn" role="button" tabindex="0" aria-label="Pieces">&#x2261;</span></span>
   </div>
   <div class="drawer" id="drawer" hidden>
     <div class="row"><span class="lbl">new</span><span class="b" data-new="ambient">blank &#xb7; ambient</span><span class="b" data-new="runway">blank &#xb7; runway</span><span class="b" data-tpl="ambient">start &#xb7; ambient</span><span class="b" data-tpl="runway">start &#xb7; runway</span></div>
