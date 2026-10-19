@@ -87,6 +87,15 @@ svg text{font-family:var(--font);font-size:9px;fill:var(--ink);letter-spacing:.0
 .tl .sec{fill:none;stroke:var(--line);stroke-width:.6}
 .tl .rot{stroke:var(--ink);stroke-width:.7;fill:none;opacity:.7}
 .wave{pointer-events:none}
+.slotc{fill:var(--paper);stroke:var(--line-2);stroke-width:.8;vector-effect:non-scaling-stroke;cursor:pointer}
+.slotc.full{stroke:var(--ink)}
+.slotc.off{stroke:var(--ink-2)}
+.slot .sh{stroke:var(--ink);stroke-width:.7;fill:var(--paper);fill-opacity:.01;vector-effect:non-scaling-stroke;pointer-events:none}
+.slot .lv .sh{fill:var(--fill);fill-opacity:1;stroke:none}
+.slot text{fill:var(--ink-2);pointer-events:none}
+.slotph{fill:var(--ring);pointer-events:none}
+.slotghost{fill:none;stroke:var(--ink);stroke-width:.8;pointer-events:none}
+.grip{fill:var(--ink);cursor:grab}
 .guide{pointer-events:none}
 .guide line{stroke:var(--line-2);stroke-width:.4;vector-effect:non-scaling-stroke}
 .guide rect{fill:var(--ring);opacity:0}
@@ -321,15 +330,28 @@ function setPiece(p,rebuild){ if(typeof alignScore==='function') requestAnimatio
 /* keyframes: position / fill / flip / rotation at a tick */
 function stateAt(o,t){
   const k=o.kf; if(t<=k[0].t) return k[0];
-  for(let i=1;i<k.length;i++){ if(t<k[i].t){ const a=k[i-1], b=k[i], u=(t-a.t)/Math.max(1e-6,b.t-a.t); return {t,x:lerp(a.x,b.x,u),y:lerp(a.y,b.y,u),lv:a.lv,flip:a.flip,rot:lerp(a.rot,b.rot,u)}; } }
+  for(let i=1;i<k.length;i++){ if(t<k[i].t){ const a=k[i-1], b=k[i], u=(t-a.t)/Math.max(1e-6,b.t-a.t); return {t,x:lerp(a.x,b.x,u),y:lerp(a.y,b.y,u),lv:a.lv,flip:a.flip,rot:lerp(a.rot,b.rot,u),slot:a.slot}; } }
   return k[k.length-1];
 }
 function setKf(o,t,patch){
-  const s=stateAt(o,t); const n={t,x:s.x,y:s.y,lv:s.lv,flip:s.flip,rot:s.rot}; Object.assign(n,patch);
+  const s=stateAt(o,t); const n={t,x:s.x,y:s.y,lv:s.lv,flip:s.flip,rot:s.rot}; if(s.slot!=null) n.slot=s.slot; Object.assign(n,patch); if(n.slot==null) delete n.slot;
   const i=o.kf.findIndex(k=>Math.abs(k.t-t)<.5);
   if(i>=0) o.kf[i]=n; else { o.kf.push(n); o.kf.sort((a,b)=>a.t-b.t); }
 }
 const isActive=(o,t)=>t>=o.enter&&(o.exit==null||t<o.exit);
+
+/* ---------- loop slots (runway): four places in the corners outside the ring.
+   a shape moved to a slot keeps looping its pattern; each slot is switched on / off on bar lines (16 ticks), and the switches are kept in the piece */
+const SLOT_POS=[[28,52],[324,52],[28,348],[324,348]], SLOT_R=20, SLOT_SC=.16;
+const slotOf=(o,t)=>{ const v=stateAt(o,t).slot; return v==null?null:v; };
+function slotOn(i,t){ const k=(cur().slotKf||[]).filter(e=>e.s===i&&e.t<=t+1e-6); return k.length?k[k.length-1].on:true; }
+function slotMembers(i,t){ return cur().objs.filter(o=>isActive(o,t)&&slotOf(o,t)===i); }
+function ringMembers(t){ return cur().objs.filter(o=>isActive(o,t)&&slotOf(o,t)==null); }
+function moveToSlot(list,i,t){ list.forEach(o=>{ if(playing) o.kf=o.kf.filter(k=>k.t<=t+.5); else o.kf.forEach(k=>{ if(k.t>t){ if(i==null) delete k.slot; else k.slot=i; } }); setKf(o,t,{slot:i}); }); }
+function toggleSlot(i){ const p=cur(); if(!p.slotKf) p.slotKf=[]; const t=curTick(); const at=playing?Math.ceil((t+.01)/16)*16:Math.floor(t/16)*16;
+  const want=!slotOn(i,at);
+  p.slotKf=p.slotKf.filter(e=>!(e.s===i&&(playing?e.t>=at:Math.abs(e.t-at)<.5)));
+  p.slotKf.push({t:at,s:i,on:want}); p.slotKf.sort((a,b)=>a.t-b.t); save(); drawTimeline(); renderField(); }
 
 /* the ring: one value 0..1 for the whole mix, recorded over time like everything else */
 let MACRO=.5;
@@ -518,7 +540,7 @@ const AMB={
     return {cont:true,
       start(t,s){ if(!running){ nz.start(t); running=true; } this.update(s,t,'jump'); env.triggerAttack(t); },
       stop(t){ env.triggerRelease(t); },
-      update(s,t,how){ const r=how==='fast'?.2:.9, sh=rot01(s.rot); if(s.flip!==lastFlip){ nz.type=s.flip?'brown':'pink'; lastFlip=s.flip; } const ps=posOf('tri',s); f.frequency.rampTo(expmap(ps.v,160,2600),r,t); f.Q.rampTo(lerp(.6,5,ps.h),r,t); o.g.gain.rampTo(s.lv?.5:.22,r,t); lfo.frequency.rampTo(expmap(sh,.03,6),r,t); lfo.min=lerp(.75,.05,sh); },
+      update(s,t,how){ const r=how==='fast'?.2:.9, sh=rot01(s.rot); if(s.flip!==lastFlip){ nz.type=s.flip?'brown':'pink'; lastFlip=s.flip; } const ps=posOf('tri',s), rg=ps.sec!=null; f.frequency.rampTo(rg?freqOf(noteA(ps.deg,0)):expmap(ps.v,160,2600),r,t); f.Q.rampTo(lerp(.6,5,rg?ps.b:ps.h),r,t); o.g.gain.rampTo(s.lv?.5:.22,r,t); lfo.frequency.rampTo(expmap(sh,.03,6),r,t); lfo.min=lerp(.75,.05,sh); },
       dispose(){ disposeAll([nz,f,env,wob,lfo,...o.nodes]); }};
   },
   circle(bus){
@@ -594,7 +616,7 @@ const AMB={
       stop(t){ on=false; },
       update(st,t,how){
         if(!on||t<nextAt) return;
-        const ps=posOf('trap',st), fq=expmap(ps.v,40,110), click=ps.h, vel=st.lv?.9:.5;
+        const ps=posOf('trap',st), rg=ps.sec!=null, fq=rg?freqOf(noteA(ps.deg,-2)):expmap(ps.v,40,110), click=rg?ps.b:ps.h, vel=st.lv?.9:.5;
         s.triggerAttackRelease(fq,'8n',t,vel); n.triggerAttackRelease(.05,t,vel*click*.5);
         if(st.flip){ s.triggerAttackRelease(fq,'8n',t+.18,vel*.6); }
         nextAt=t+expmap(1-rot01(st.rot),.5,6);
@@ -667,6 +689,7 @@ function tick(time){
     try{
       if(grid){
         if(!act) return;
+        if(s.slot!=null&&!slotOn(s.slot,tk)) return;
         const st=((tk-Math.round(o.enter))%o.steps+o.steps)%o.steps, c=o.cells[st]; if(!c.on) return;
         applyGrid(v,s); v.trigger(time,(c.acc?1:.72)*(s.lv?1:.45),c.n,shiftOf(s.y),o);
       } else if(v.cont){
@@ -699,7 +722,7 @@ function seek(tk){
 }
 function rewind(){ seek(0); }
 function paintBar(){ if(typeof paintGuideBtn==='function'&&$('#noteBtn')) paintGuideBtn(); $('#play').textContent=playing?'\u25a0':'\u25b6'; $('#play').setAttribute('aria-label',playing?'Pause':'Play'); $('#pieceName').textContent=cur().name; $('#bpm').textContent=cur().bpm; $('#bpmWrap').hidden=!MD().grid;
-  $('#hint').textContent=(MD().grid?'tap = soft / loud \u00b7 hold = new pattern \u00b7 ':'tap = soft / loud \u00b7 hold = flip \u00b7 ')+'double tap = out \u00b7 drag = move \u00b7 handle = turn \u00b7 drag a shape in from the right column \u00b7 stopped: edits land at the score time \u00b7 rim dot = whole mix (rings = last cycle, low\u2192top) \u00b7 score: tap = seek \u00b7 \u25cb in \u00b7 \u25b3 tap \u00b7 \u25bd hold \u00b7 \u25cf out \u00b7 inner line = turn'; }
+  $('#hint').textContent=(MD().grid?'centre dot \u2192 a corner = loop it there \u00b7 corner: tap = on / off at the next bar, drag back = edit, double tap = out \u00b7 tap = soft / loud \u00b7 hold = new pattern \u00b7 ':'tap = soft / loud \u00b7 hold = flip \u00b7 ')+'double tap = out \u00b7 drag = move \u00b7 handle = turn \u00b7 drag a shape in from the right column \u00b7 stopped: edits land at the score time \u00b7 rim dot = whole mix (rings = last cycle, low\u2192top) \u00b7 score: tap = seek \u00b7 \u25cb in \u00b7 \u25b3 tap \u00b7 \u25bd hold \u00b7 \u25cf out \u00b7 inner line = turn'; }
 function secOf(tk){ return tk*(60/cur().bpm/4); }
 function mmss(tk){ const s=secOf(tk); const m=Math.floor(s/60), r=Math.floor(s%60); return (m<10?'0':'')+m+':'+(r<10?'0':'')+r; }
 
@@ -707,7 +730,7 @@ function mmss(tk){ const s=secOf(tk); const m=Math.floor(s/60), r=Math.floor(s%6
 const field=$('#field'), CX=176, CY=200, R=150, RF=100, RO=160;
 const pts=a=>a.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
 const fx=x=>CX+x*RF, fy=y=>CY+y*RF;
-let gTrails, gObjs, arcEl, hdEl, phEl, gWave, gGuide, objEls={}, selId=null, waveUntil=0;
+let gTrails, gObjs, arcEl, hdEl, phEl, gWave, gGuide, gSlots=null, slotEls=[], gripEl=null, miniEls={}, objEls={}, selId=null, waveUntil=0;
 function shapeEl(shape,scale,cls){
   const d=SHAPES[shape]; let e;
   if(d.el==='polygon') e=sv('polygon',{points:pts(d.pts.map(p=>[p[0]*scale,p[1]*scale]))});
@@ -743,6 +766,7 @@ function buildField(){
     bindLibDrag(g,k);
     lib.appendChild(g);
   });
+  gSlots=null; if(grid){ gSlots=sv('g',{}); field.appendChild(gSlots); buildSlots(); }
   field.addEventListener('pointerdown',e=>{ if(e.target===field||e.target.classList.contains('hair')||e.target.classList.contains('ringc')) select(null); });
   objEls={}; selId=null; cur().objs.forEach(o=>mountObj(o));
   renderField();
@@ -776,11 +800,12 @@ function renderField(){
     const s=stateAt(o,t); placeObj(o,e,s);
     e.g.classList.toggle('gone',o.exit!=null&&t>=o.exit);
     e.g.classList.toggle('pre',t<o.enter);
-    e.g.style.display=(t<o.enter)?'none':'';   /* a shape that has not entered yet is not shown */
+    const inSlot=MD().grid&&slotOf(o,t)!=null;
+    e.g.style.display=(t<o.enter||inSlot)?'none':'';   /* not entered yet, or moved to a loop slot: not drawn in the ring */
     /* the trail: the newest movement is full strength, older movement fades out over the window. 8 opacity steps, one path each */
     const win=MD().grid?96:160, gone=o.exit!=null&&t>=o.exit, STEPS=8;
     const k=o.kf.filter(x=>x.t<=t+.5&&x.t>=t-win); if(k.length&&k[k.length-1].t<t-.5) k.push(Object.assign({},s,{t}));
-    if(gone||k.length<2||t<o.enter){ if(e.tr.childNodes.length) e.tr.innerHTML=''; }
+    if(gone||inSlot||k.length<2||t<o.enter){ if(e.tr.childNodes.length) e.tr.innerHTML=''; }
     else {
       const d=new Array(STEPS).fill('');
       for(let i=1;i<k.length;i++){ const a=k[i-1], b=k[i]; if(Math.abs(a.x-b.x)+Math.abs(a.y-b.y)<.002) continue; const age=clamp((t-b.t)/win,0,1); const bk=Math.min(STEPS-1,Math.floor(age*STEPS)); d[bk]+='M'+fx(a.x).toFixed(1)+' '+fy(a.y).toFixed(1)+'L'+fx(b.x).toFixed(1)+' '+fy(b.y).toFixed(1); }
@@ -789,12 +814,60 @@ function renderField(){
     }
   });
   if(!macroDrag){ const mv=macroAt(t); drawArc(mv); $('#ringv').textContent='ring '+mv.toFixed(2); }
+  if(gSlots) renderSlots(t);
   if(MD().grid){
     const L=MD().loop, ph=((t%L)+L)%L/L, a=ph*Math.PI*2-Math.PI/2;
     phEl.setAttribute('cx',(CX+Math.cos(a)*(R-1.5)).toFixed(1)); phEl.setAttribute('cy',(CY+Math.sin(a)*(R-1.5)).toFixed(1));
     $('#clock').textContent=mmss(t)+' \u00b7 bar '+(Math.floor(t/16)+1);
   } else $('#clock').textContent=mmss(t);
 }
+function buildSlots(){
+  gSlots.innerHTML=''; slotEls=[]; miniEls={};
+  SLOT_POS.forEach(([x,y],i)=>{ const g=sv('g',{class:'slot'});
+    const c=sv('circle',{cx:x,cy:y,r:SLOT_R,class:'slotc'}); g.appendChild(c);
+    const mini=sv('g',{}); g.appendChild(mini);
+    const ph=sv('circle',{r:1.8,class:'slotph'}); g.appendChild(ph);
+    const lab=sv('text',{x:x,y:(y+(i<2?SLOT_R+11:-SLOT_R-5)).toFixed(1),'text-anchor':'middle'}); g.appendChild(lab);
+    gSlots.appendChild(g); slotEls.push({c,mini,ph,lab}); bindSlot(g,i); });
+  gripEl=sv('circle',{cx:CX,cy:CY,r:6,class:'grip'}); gSlots.appendChild(gripEl); bindGrip(gripEl);
+}
+function renderSlots(t){
+  const a=(((t%16)+16)%16)/16*Math.PI*2-Math.PI/2, nextBar=Math.ceil((t+.01)/16)*16;
+  slotEls.forEach((e,i)=>{ const mem=slotMembers(i,t), on=slotOn(i,t), [x,y]=SLOT_POS[i];
+    e.c.classList.toggle('full',mem.length>0); e.c.classList.toggle('off',mem.length>0&&!on);
+    const pend=playing?(cur().slotKf||[]).find(k=>k.s===i&&k.t>t&&k.t<=nextBar&&k.on!==on):null;
+    e.lab.textContent='ABCD'[i]+(mem.length?(pend?(pend.on?' \u2192 on':' \u2192 off'):(on?'':' off')):'');
+    e.ph.setAttribute('cx',(x+Math.cos(a)*SLOT_R).toFixed(1)); e.ph.setAttribute('cy',(y+Math.sin(a)*SLOT_R).toFixed(1)); e.ph.style.display=(mem.length&&on&&playing)?'':'none';
+    e.mini.style.opacity=on?1:.3; });
+  cur().objs.forEach(o=>{ const sl=isActive(o,t)?slotOf(o,t):null; let m=miniEls[o.id];
+    if(sl==null){ if(m) m.style.display='none'; return; }
+    if(!m){ const d=kindDef(mode,o.kind); m=sv('g',{}); m.appendChild(shapeEl(d.shape,d.scale,'sh')); miniEls[o.id]=m; }
+    if(m.parentNode!==slotEls[sl].mini) slotEls[sl].mini.appendChild(m);
+    const s=stateAt(o,t), [x,y]=SLOT_POS[sl];
+    m.style.display=''; m.classList.toggle('lv',!!s.lv);
+    m.setAttribute('transform','translate('+(x+s.x*RF*SLOT_SC).toFixed(1)+' '+(y+s.y*RF*SLOT_SC).toFixed(1)+') scale('+SLOT_SC+') rotate('+(s.rot||0).toFixed(1)+')'); });
+  gripEl.style.display=ringMembers(t).length?'':'none';
+}
+const slotHit=p=>SLOT_POS.findIndex(([x,y])=>Math.hypot(p.x-x,p.y-y)<SLOT_R+8);
+function dragGhost(p,g){ if(!g){ g=sv('circle',{r:SLOT_R,class:'slotghost'}); gSlots.appendChild(g); } g.setAttribute('cx',p.x.toFixed(1)); g.setAttribute('cy',p.y.toFixed(1)); return g; }
+/* the centre dot: drag it to a corner = everything now in the ring moves there and keeps looping */
+function bindGrip(el){ let down=false, ghost=null;
+  el.addEventListener('pointerdown',e=>{ e.preventDefault(); e.stopPropagation(); el.setPointerCapture(e.pointerId); down=true; });
+  el.addEventListener('pointermove',e=>{ if(down) ghost=dragGhost(svgPt(e),ghost); });
+  const end=e=>{ if(!down) return; down=false; if(ghost){ ghost.remove(); ghost=null; } if(e.type!=='pointerup') return;
+    const i=slotHit(svgPt(e)); if(i<0) return; const t=Math.round(curTick()); moveToSlot(ringMembers(t),i,t); select(null); renderField(); drawTimeline(); save(); };
+  el.addEventListener('pointerup',end); el.addEventListener('pointercancel',end); }
+/* a slot: tap = on / off at the next bar line, drag into the ring = bring its shapes back to edit, double tap = take its shapes out */
+function bindSlot(g,i){ let down=false, moved=false, sx=0, sy=0, ghost=null, lastTap=0, tapT=null;
+  g.addEventListener('pointerdown',e=>{ e.preventDefault(); e.stopPropagation(); g.setPointerCapture(e.pointerId); down=true; moved=false; const p=svgPt(e); sx=p.x; sy=p.y; });
+  g.addEventListener('pointermove',e=>{ if(!down) return; const p=svgPt(e); if(!moved&&Math.hypot(p.x-sx,p.y-sy)<5) return; moved=true; ghost=dragGhost(p,ghost); });
+  const end=e=>{ if(!down) return; down=false; if(ghost){ ghost.remove(); ghost=null; } if(e.type!=='pointerup') return;
+    const t=Math.round(curTick()), mem=slotMembers(i,t);
+    if(moved){ const p=svgPt(e); if(mem.length&&Math.hypot(p.x-CX,p.y-CY)<R){ moveToSlot(mem,null,t); renderField(); drawTimeline(); save(); } return; }
+    if(!mem.length) return;
+    const now=performance.now(); if(now-lastTap<320){ lastTap=0; if(tapT){ clearTimeout(tapT); tapT=null; } mem.forEach(o=>exitObject(o)); renderField(); drawTimeline(); save(); return; }
+    lastTap=now; tapT=setTimeout(()=>{ tapT=null; toggleSlot(i); },330); };
+  g.addEventListener('pointerup',end); g.addEventListener('pointercancel',end); }
 function svgPt(e){ const p=field.createSVGPoint(); p.x=e.clientX; p.y=e.clientY; return p.matrixTransform(field.getScreenCTM().inverse()); }
 function liveUpdate(o,s,fireIfSilent){
   if(!(playing&&built&&built.voices[o.id])) return; const t=curTick(); if(!isActive(o,t)) return;
@@ -975,8 +1048,9 @@ function drawTimeline(){
   p.objs.forEach(o=>{
     const cx=LX+of[o.id]*LW+LW/2, ye=y(o.enter), hue=SHAPES[kindDef(mode,o.kind).shape].hue;
     const lastK=o.kf[o.kf.length-1].t, end=o.exit!=null?o.exit:Math.max(t,o.enter,lastK,o.enter+16);
-    const ks=o.kf.filter(k=>k.t>o.enter&&k.t<end).map(k=>k.t); const bounds=[...new Set([o.enter].concat(ks,[Math.min(Math.max(t,o.enter),end)],[end]))].sort((a,b)=>a-b);
-    for(let j=0;j<bounds.length-1;j++){ const a=bounds[j], b=bounds[j+1]; if(b-a<.01) continue; const lv=stateAt(o,a+.01).lv, fut=a>=t; s+='<rect x="'+(cx-BW/2)+'" y="'+y(a)+'" width="'+BW+'" height="'+((b-a)*ppt).toFixed(1)+'" fill="'+hue+'" fill-opacity="'+((lv?.75:.3)*(fut?.3:1)).toFixed(2)+'"/>'; }
+    const ks=o.kf.filter(k=>k.t>o.enter&&k.t<end).map(k=>k.t).concat((p.slotKf||[]).filter(k=>k.t>o.enter&&k.t<end).map(k=>k.t)); const bounds=[...new Set([o.enter].concat(ks,[Math.min(Math.max(t,o.enter),end)],[end]))].sort((a,b)=>a-b);
+    for(let j=0;j<bounds.length-1;j++){ const a=bounds[j], b=bounds[j+1]; if(b-a<.01) continue; const st0=stateAt(o,a+.01), lv=st0.lv, fut=a>=t, off=grid&&st0.slot!=null&&!slotOn(st0.slot,a+.01); s+='<rect x="'+(cx-BW/2)+'" y="'+y(a)+'" width="'+BW+'" height="'+((b-a)*ppt).toFixed(1)+'" fill="'+hue+'" fill-opacity="'+((lv?.75:.3)*(fut?.3:1)*(off?.2:1)).toFixed(2)+'"/>'; }
+    if(grid){ let prev=null; o.kf.forEach(k=>{ const sl=k.slot==null?null:k.slot; if(sl!==prev&&k.t>=o.enter){ if(sl!=null||prev!=null) s+='<text x="'+(cx-BW/2-1)+'" y="'+(y(k.t)+3)+'" text-anchor="end" fill="var(--ink-2)">'+(sl!=null?'\u2192'+'ABCD'[sl]:'\u21a9')+'</text>'; } prev=sl; }); }
     /* rotation: a thin line inside the bar, left = 0\u00b0, right = 180\u00b0 */
     if(end-o.enter>1){ let d=''; const step=Math.max(2,Math.round(6/ppt)); for(let tk=o.enter;tk<=end;tk+=step){ const r=rot01(stateAt(o,Math.min(tk,end)).rot); d+=(d?'L':'M')+(cx-BW/2+1+r*(BW-2)).toFixed(1)+' '+y(Math.min(tk,end)).toFixed(1)+' '; } s+='<path class="rot" d="'+d+'"/>'; }
     s+='<text transform="translate('+(cx+BW/2+3)+' '+(ye+4)+') rotate(90)" fill="var(--ink-2)">'+o.label+'</text>';
@@ -1089,13 +1163,14 @@ function ringsLabel(kind,deg){
     case 'bar': return noteA(deg,0);
     case 'cloud': case 'circle': return noteA(deg,1);
     case 'rrect': return G_CH[deg%7];
-    case 'rect': return noteA(deg,0);
+    case 'rect': case 'tri': return noteA(deg,0);
+    case 'trap': return noteA(deg,-2);
     default: return SCALES.ambient.notes[deg%7];
   }
 }
 function buildGuideRings(kind){
   const L=(kind?limOf(kind):1)*RF, LM=(kind?Math.max(limOf(kind),reachMax(kind)):1)*RF, W=360/7, pt=(r,a)=>[CX+r*Math.sin(a*Math.PI/180),CY-r*Math.cos(a*Math.PI/180)], fs=clamp(L/15,4.5,7);
-  if(kind!=='tri'&&kind!=='trap'){
+  {
     for(let ring=0;ring<3;ring++) for(let i=0;i<7;i++){
       const r0=L*ring/3, r1=ring===2?LM:L*(ring+1)/3, a0=i*W-W/2, a1=a0+W;
       const [x0,y0]=pt(r1,a0),[x1,y1]=pt(r1,a1),[x2,y2]=pt(r0,a1),[x3,y3]=pt(r0,a0);
@@ -1106,12 +1181,10 @@ function buildGuideRings(kind){
     }
     [L/3,L*2/3,LM].forEach(rr=>gGuide.appendChild(sv('circle',{cx:CX,cy:CY,r:rr.toFixed(1),class:'gl'})));
     for(let i=0;i<7;i++){ const [x,y]=pt(LM,i*W-W/2); gGuide.appendChild(sv('line',{x1:CX,y1:CY,x2:x.toFixed(1),y2:y.toFixed(1)})); }
-  } else {
-    [0,1/3,2/3,1].forEach(f=>{ if(f>0) gGuide.appendChild(sv('circle',{cx:CX,cy:CY,r:(LM*f).toFixed(1),class:'gl'})); const v=kind==='tri'?expmap(f,160,2600):expmap(f,40,110); const t=sv('text',{x:CX+3,y:(CY-LM*f-2).toFixed(1)}); t.textContent=v.toFixed(0)+' Hz'; gGuide.appendChild(t); });
   }
   const r=R-3, xw=G_X[kind]||['dark','bright'];
-  const l1=(kind==='tri'||kind==='trap')?'angle: top '+xw[0]+' \u2192 bottom '+xw[1]:'inside each ring: inner edge '+xw[0]+' \u2192 outer edge '+xw[1];
-  const l2=!kind?'angle = note (fifths, D at top) \u00b7 ring = octave \u00b7 select a shape':(kind==='tri'||kind==='trap')?kind+' \u00b7 centre \u2192 edge = pitch (no note)':kind+' \u00b7 angle = '+(kind==='rrect'?'chord':'note')+' (fifths) \u00b7 ring = octave';
+  const l1='inside each ring: inner edge '+xw[0]+' \u2192 outer edge '+xw[1];
+  const l2=!kind?'angle = note (fifths, D at top) \u00b7 ring = octave \u00b7 select a shape':kind+' \u00b7 angle = '+(kind==='rrect'?'chord':'note')+' (fifths) \u00b7 ring = octave';
   [l1,l2].forEach((tx,i)=>{ const t=sv('text',{x:CX,y:CY+r-20+i*10,'text-anchor':'middle',class:'cap'}); t.textContent=tx; gGuide.appendChild(t); });
 }
 function buildGuide(kind){
